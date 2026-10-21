@@ -1,0 +1,464 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Quest - Aventura</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #071426; color: white;
+  font-family: system-ui, Arial, sans-serif;
+  text-align: center;
+}
+header { padding: 20px 12px 12px; }
+h1 { margin: 0; font-size: clamp(26px, 5vw, 42px); }
+h1 span { color: #55efb1; }
+header p { color: #a9c1dc; margin: 7px 0 16px; }
+.game {
+  max-width: 1000px; margin: auto; padding: 12px;
+}
+.hud {
+  display: flex; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap; margin-bottom: 10px;
+}
+.stat {
+  background: #142b47; border: 1px solid #2b496b;
+  border-radius: 12px; padding: 9px 14px;
+  font-weight: 800; flex: 1; min-width: 90px;
+}
+canvas {
+  width: 100%; display: block; border-radius: 14px;
+  border: 2px solid #345779; background: #55bce9;
+  image-rendering: pixelated; touch-action: none;
+}
+.message {
+  background: #142b47; padding: 12px; margin-top: 10px;
+  border-radius: 12px; color: #d8e8ff; min-height: 45px;
+}
+.actions {
+  display: flex; justify-content: center; gap: 10px;
+  flex-wrap: wrap; margin-top: 12px;
+}
+button {
+  border: 0; border-radius: 12px; padding: 12px 18px;
+  background: #55efb1; color: #08251d;
+  font-weight: 900; font-size: 15px; cursor: pointer;
+}
+button.secondary { background: #203c5c; color: white; }
+.controls {
+  display: flex; justify-content: space-between;
+  gap: 12px; margin: 14px 0 0;
+}
+.controls button {
+  min-width: 66px; min-height: 58px;
+  font-size: 24px; touch-action: none; user-select: none;
+}
+.controls .jump { flex: 1; background: #ffce58; }
+.hint { color: #92abc7; font-size: 13px; line-height: 1.6; }
+footer { padding: 18px; color: #6f8aa9; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚔️ PIXEL <span>QUEST</span></h1>
+  <p>Recoge monedas, esquiva monstruos y encuentra la salida.</p>
+</header>
+
+<main class="game">
+  <div class="hud">
+    <div class="stat">❤️ <span id="lives">3</span></div>
+    <div class="stat">🪙 <span id="coins">0</span></div>
+    <div class="stat">⭐ NIVEL <span id="level">1</span>/3</div>
+  </div>
+
+  <canvas id="game" width="960" height="540"></canvas>
+  <div class="message" id="message">
+    ¡Prepárate, aventurero! Pulsa JUGAR para comenzar.
+  </div>
+
+  <div class="actions">
+    <button id="start">▶ JUGAR</button>
+    <button class="secondary" id="restart">↻ REINICIAR</button>
+  </div>
+
+  <div class="controls">
+    <button class="secondary" id="left" aria-label="Mover a la izquierda">◀</button>
+    <button class="secondary" id="right" aria-label="Mover a la derecha">▶</button>
+    <button class="jump" id="jump">⬆ SALTAR</button>
+  </div>
+
+  <p class="hint">
+    Ordenador: ← → para moverte y ESPACIO o ↑ para saltar.<br>
+    Móvil: utiliza los botones. ¡Alcanza la bandera para pasar de nivel!
+  </p>
+</main>
+<footer>PIXEL QUEST · Tu primera aventura programada</footer>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const ui = {
+  lives: document.getElementById("lives"),
+  coins: document.getElementById("coins"),
+  level: document.getElementById("level"),
+  message: document.getElementById("message"),
+  start: document.getElementById("start")
+};
+
+const W = canvas.width, H = canvas.height;
+const keys = { left: false, right: false };
+let jumpQueued = false;
+let player, platforms, coins, enemies, goal;
+let level = 1, lives = 3, totalCoins = 0;
+let playing = false, finished = false;
+let camera = 0, frame = 0;
+let collected = new Set();
+
+const layouts = [
+  {
+    width: 1900,
+    platforms: [
+      [0,470,350],[430,430,230],[740,380,220],
+      [1030,430,250],[1370,365,220],[1660,450,240]
+    ],
+    coins: [[180,425],[275,425],[495,385],[570,385],
+      [805,335],[890,335],[1090,385],[1190,385],[1440,320],[1510,320]],
+    enemies: [[510,405,440,640],[1100,405,1040,1250]],
+    goal: [1800,365]
+  },
+  {
+    width: 2100,
+    platforms: [
+      [0,470,280],[350,415,190],[610,355,190],
+      [870,415,190],[1130,340,200],[1400,400,190],[1680,330,380]
+    ],
+    coins: [[120,425],[390,370],[460,370],[660,310],[730,310],
+      [920,370],[1190,295],[1260,295],[1460,355],[1760,285],[1850,285]],
+    enemies: [[390,390,350,510],[940,390,870,1020],[1490,375,1400,1550]],
+    goal: [1930,245]
+  },
+  {
+    width: 2350,
+    platforms: [
+      [0,470,260],[330,410,170],[570,350,180],[820,410,170],
+      [1060,335,190],[1320,395,170],[1570,325,190],
+      [1840,390,190],[2090,320,260]
+    ],
+    coins: [[100,425],[370,365],[620,305],[690,305],
+      [870,365],[1110,290],[1190,290],[1370,350],
+      [1630,280],[1900,345],[1970,345],[2160,275],[2250,275]],
+    enemies: [[370,385,330,465],[870,385,820,960],
+      [1370,370,1320,1450],[1900,365,1840,1970]],
+    goal: [2250,235]
+  }
+];
+
+function loadLevel(n) {
+  const d = layouts[n-1];
+  level = n;
+  camera = 0;
+  collected = new Set();
+  player = { x: 60, y: 350, w: 34, h: 44, vx: 0, vy: 0,
+             ground: false, invincible: 0 };
+  platforms = d.platforms.map(p => ({x:p[0],y:p[1],w:p[2],h:70}));
+  coins = d.coins.map((p,i) => ({x:p[0],y:p[1],id:i}));
+  enemies = d.enemies.map(e => ({
+    x:e[0], y:e[1], left:e[2], right:e[3], dir:1
+  }));
+  goal = {x:d.goal[0], y:d.goal[1]};
+  ui.level.textContent = level;
+  ui.message.textContent = "Nivel " + level + ": ¡busca las monedas y llega a la bandera!";
+  updateUI();
+}
+
+function updateUI() {
+  ui.lives.textContent = lives;
+  ui.coins.textContent = totalCoins;
+}
+
+function startGame() {
+  lives = 3;
+  totalCoins = 0;
+  finished = false;
+  playing = true;
+  ui.start.textContent = "▶ JUGAR OTRA VEZ";
+  loadLevel(1);
+}
+
+function loseLife() {
+  if (player.invincible > 0 || !playing) return;
+  lives--;
+  updateUI();
+
+  if (lives <= 0) {
+    playing = false;
+    ui.message.textContent = "¡Fin de la partida! Pulsa REINICIAR para volver a intentarlo.";
+    ui.start.textContent = "▶ VOLVER A JUGAR";
+    return;
+  }
+
+  player.x = Math.max(25, camera + 50);
+  player.y = 300;
+  player.vx = 0;
+  player.vy = 0;
+  player.invincible = 100;
+  ui.message.textContent = "¡Cuidado! Te queda(n) " + lives + " vida(s).";
+}
+
+function nextLevel() {
+  if (level >= 3) {
+    playing = false;
+    finished = true;
+    ui.message.textContent = "🏆 ¡ENHORABUENA! Has completado Pixel Quest con " +
+      totalCoins + " monedas.";
+    ui.start.textContent = "▶ JUGAR DE NUEVO";
+  } else {
+    loadLevel(level + 1);
+  }
+}
+
+function update() {
+  frame++;
+  if (!playing) return;
+
+  const speed = 4.2;
+  player.vx = (keys.right ? speed : 0) - (keys.left ? speed : 0);
+  player.x += player.vx;
+
+  if (jumpQueued && player.ground) {
+    player.vy = -12.5;
+    player.ground = false;
+  }
+  jumpQueued = false;
+
+  player.vy += 0.52;
+  player.vy = Math.min(player.vy, 13);
+
+  const oldBottom = player.y + player.h;
+  player.y += player.vy;
+  player.ground = false;
+
+  for (const p of platforms) {
+    const overlaps = player.x + player.w > p.x &&
+      player.x < p.x + p.w;
+    if (overlaps && oldBottom <= p.y &&
+        player.y + player.h >= p.y && player.vy >= 0) {
+      player.y = p.y - player.h;
+      player.vy = 0;
+      player.ground = true;
+    }
+  }
+
+  player.x = Math.max(0, Math.min(player.x, layouts[level-1].width-player.w));
+
+  if (player.y > H + 100) loseLife();
+  if (player.invincible > 0) player.invincible--;
+
+  for (const e of enemies) {
+    e.x += e.dir * 1.35;
+    if (e.x < e.left || e.x > e.right) e.dir *= -1;
+
+    if (player.x + player.w > e.x && player.x < e.x + 34 &&
+        player.y + player.h > e.y - 26 && player.y < e.y + 12) {
+      loseLife();
+    }
+  }
+
+  for (const c of coins) {
+    if (collected.has(c.id)) continue;
+    const dx = player.x + player.w/2 - c.x;
+    const dy = player.y + player.h/2 - c.y;
+    if (Math.hypot(dx,dy) < 32) {
+      collected.add(c.id);
+      totalCoins++;
+      updateUI();
+    }
+  }
+
+  if (player.x + player.w > goal.x - 12 &&
+      player.x < goal.x + 45 && player.y + player.h > goal.y - 55) {
+    nextLevel();
+  }
+
+  camera = Math.max(0, Math.min(
+    player.x - W * 0.34, layouts[level-1].width - W
+  ));
+}
+
+function rect(x,y,w,h,color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x),Math.round(y),w,h);
+}
+
+function drawBackground() {
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,"#38a8ed");
+  sky.addColorStop(1,"#c1f4ff");
+  rect(0,0,W,H,sky);
+
+  ctx.fillStyle = "#fff4ae";
+  ctx.beginPath(); ctx.arc(790,90,42,0,Math.PI*2); ctx.fill();
+
+  for (let i=0;i<8;i++) {
+    const x = ((i*190-camera*0.2)%(W+220)+W+220)%(W+220)-80;
+    ctx.fillStyle = i%2 ? "#8bd8ee" : "#6fc5e7";
+    ctx.beginPath();
+    ctx.moveTo(x,320); ctx.lineTo(x+85,110+(i%3)*30);
+    ctx.lineTo(x+175,320); ctx.fill();
+    ctx.fillStyle = "#f0fbff";
+    ctx.beginPath();
+    ctx.moveTo(x+50,200-(i%3)*10);
+    ctx.lineTo(x+85,110+(i%3)*30);
+    ctx.lineTo(x+120,200-(i%3)*10);
+    ctx.fill();
+  }
+
+  for (let i=0;i<11;i++) {
+    const x = ((i*145-camera*0.42)%(W+180)+W+180)%(W+180)-60;
+    rect(x,365,18,105,"#8c593e");
+    ctx.fillStyle="#16875b";
+    ctx.beginPath(); ctx.arc(x+8,350,37,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x-10,330,25,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawPlatform(p) {
+  rect(p.x-camera,p.y,p.w,p.h,"#74432f");
+  rect(p.x-camera,p.y,p.w,14,"#45c95d");
+  rect(p.x-camera,p.y+10,p.w,6,"#21834b");
+  for (let x=p.x+8;x<p.x+p.w;x+=28) {
+    rect(x-camera,p.y+25,12,9,"#995538");
+    rect(x-camera+12,p.y+46,10,8,"#60382e");
+  }
+}
+
+function drawPlayer() {
+  if (player.invincible>0 && Math.floor(frame/5)%2===0) return;
+  const x=player.x-camera, y=player.y;
+  // Sombra
+  rect(x+2,y+player.h,30,4,"#296f77");
+  // Pelo
+  rect(x+7,y,22,10,"#623521");
+  rect(x+3,y+7,28,10,"#623521");
+  // Cara
+  rect(x+9,y+8,18,13,"#ffc58d");
+  rect(x+24,y+12,4,4,"#192c4b");
+  // Cuerpo y brazos
+  rect(x+6,y+22,23,13,"#fa536b");
+  rect(x+1,y+23,8,8,"#ffc58d");
+  rect(x+26,y+23,8,8,"#ffc58d");
+  // Piernas animadas
+  rect(x+7,y+34,9,9,"#273d83");
+  rect(x+20,y+34,9,9,"#273d83");
+  rect(x+3,y+41,12,3,"#392a42");
+  rect(x+20,y+41,12,3,"#392a42");
+}
+
+function draw() {
+  drawBackground();
+
+  for (const p of platforms) drawPlatform(p);
+
+  for (const c of coins) {
+    if (collected.has(c.id)) continue;
+    const x=c.x-camera, y=c.y+Math.sin(frame/9+c.id)*4;
+    ctx.fillStyle="#d58a10";
+    ctx.beginPath(); ctx.ellipse(x,y,11,15,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#ffdf4c";
+    ctx.beginPath(); ctx.ellipse(x-2,y-2,6,10,0,0,Math.PI*2); ctx.fill();
+    rect(x-2,y-7,3,12,"#fff2a1");
+  }
+
+  for (const e of enemies) {
+    const x=e.x-camera, y=e.y;
+    rect(x+3,y-8,28,18,"#137c59");
+    rect(x,y-18,34,18,"#20bd78");
+    rect(x+5,y-23,7,7,"#20bd78");
+    rect(x+23,y-23,7,7,"#20bd78");
+    rect(x+7,y-13,5,5,"white");
+    rect(x+23,y-13,5,5,"white");
+    rect(x+9,y-12,3,4,"#10243a");
+    rect(x+25,y-12,3,4,"#10243a");
+  }
+
+  // Bandera de meta
+  rect(goal.x-camera,goal.y,7,95,"#f4f7ff");
+  rect(goal.x-camera+7,goal.y,43,28,"#ff4d70");
+  rect(goal.x-camera+7,goal.y+28,32,7,"#ff4d70");
+  rect(goal.x-camera-6,goal.y+92,23,7,"#f4f7ff");
+
+  drawPlayer();
+
+  // Indicador de pausa o inicio
+  if (!playing && !finished) {
+    ctx.fillStyle="#071426b8";
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign="center";
+    ctx.fillStyle="white";
+    ctx.font="bold 42px system-ui";
+    ctx.fillText("PIXEL QUEST",W/2,H/2-24);
+    ctx.font="20px system-ui";
+    ctx.fillStyle="#55efb1";
+    ctx.fillText("Pulsa JUGAR para comenzar",W/2,H/2+20);
+  }
+
+  if (finished) {
+    ctx.fillStyle="#071426bb";
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign="center";
+    ctx.fillStyle="#ffdf4c";
+    ctx.font="bold 42px system-ui";
+    ctx.fillText("¡VICTORIA!",W/2,H/2);
+    ctx.fillStyle="white";
+    ctx.font="22px system-ui";
+    ctx.fillText("Monedas: "+totalCoins,W/2,H/2+40);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById("start").addEventListener("click",startGame);
+document.getElementById("restart").addEventListener("click",startGame);
+
+document.addEventListener("keydown",e => {
+  if (["ArrowLeft","ArrowRight","ArrowUp"," "].includes(e.key)) e.preventDefault();
+  if (e.key==="ArrowLeft" || e.key.toLowerCase()==="a") keys.left=true;
+  if (e.key==="ArrowRight" || e.key.toLowerCase()==="d") keys.right=true;
+  if (e.key==="ArrowUp" || e.key===" ") jumpQueued=true;
+  if (e.key.toLowerCase()==="r") startGame();
+});
+document.addEventListener("keyup",e => {
+  if (e.key==="ArrowLeft" || e.key.toLowerCase()==="a") keys.left=false;
+  if (e.key==="ArrowRight" || e.key.toLowerCase()==="d") keys.right=false;
+});
+
+function holdButton(id,key) {
+  const b=document.getElementById(id);
+  const down=e=>{e.preventDefault();keys[key]=true;};
+  const up=e=>{e.preventDefault();keys[key]=false;};
+  b.addEventListener("pointerdown",down);
+  b.addEventListener("pointerup",up);
+  b.addEventListener("pointerleave",up);
+  b.addEventListener("pointercancel",up);
+}
+holdButton("left","left");
+holdButton("right","right");
+
+const jumpButton=document.getElementById("jump");
+jumpButton.addEventListener("pointerdown",e=>{
+  e.preventDefault(); jumpQueued=true;
+});
+
+loadLevel(1);
+loop();
+</script>
+</body>
+</html>
